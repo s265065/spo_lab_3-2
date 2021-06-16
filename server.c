@@ -60,11 +60,13 @@ static struct json_object * handle_request_drop_table(struct json_api_drop_table
 }
 
 static struct json_object * map_columns_to_indexes(unsigned int request_columns_amount, char ** request_columns_names,
-    struct storage_table * table, unsigned int * columns_amount, unsigned int ** columns_indexes) {
+    struct storage_joined_table * table, unsigned int * columns_amount, unsigned int ** columns_indexes) {
     unsigned int columns_count = request_columns_amount;
 
+    uint16_t table_columns_amount = storage_joined_table_get_columns_amount(table);
+
     if (columns_count == 0) {
-        columns_count = table->columns.amount;
+        columns_count = table_columns_amount;
     }
 
     *columns_indexes = malloc(sizeof(**columns_indexes) * columns_count);
@@ -76,8 +78,8 @@ static struct json_object * map_columns_to_indexes(unsigned int request_columns_
         for (unsigned int i = 0; i < columns_count; ++i) {
             bool found = false;
 
-            for (unsigned int j = 0; j < table->columns.amount; ++j) {
-                if (strcmp(request_columns_names[i], table->columns.columns[j].name) == 0) {
+            for (unsigned int j = 0; j < table_columns_amount; ++j) {
+                if (strcmp(request_columns_names[i], storage_joined_table_get_column(table, j).name) == 0) {
                     (*columns_indexes)[i] = j;
                     found = true;
                     break;
@@ -85,13 +87,12 @@ static struct json_object * map_columns_to_indexes(unsigned int request_columns_
             }
 
             if (!found) {
-                size_t msg_length = 42 + strlen(table->name) + strlen(request_columns_names[i]);
+                size_t msg_length = 41 + strlen(request_columns_names[i]);
 
                 char msg[msg_length];
-                snprintf(msg, msg_length, "column with name %s is not exists in table %s",
-                         request_columns_names[i], table->name);
+                snprintf(msg, msg_length, "column with name %s is not exists in table", request_columns_names[i]);
 
-                storage_table_delete(table);
+                storage_joined_table_delete(table);
                 return json_api_make_error(msg);
             }
         }
@@ -164,13 +165,14 @@ static struct json_object * handle_request_insert(struct json_api_insert_request
 
     unsigned int columns_amount;
     unsigned int * columns_indexes;
+    struct storage_joined_table * joined_table = storage_joined_table_wrap(table);
 
     {
-        struct json_object * error = map_columns_to_indexes(request.columns.amount, request.columns.columns, table,
-            &columns_amount, &columns_indexes);
+        struct json_object * error = map_columns_to_indexes(request.columns.amount, request.columns.columns,
+            joined_table, &columns_amount, &columns_indexes);
 
         if (error) {
-            storage_table_delete(table);
+            storage_joined_table_delete(joined_table);
             return error;
         }
     }
@@ -180,7 +182,7 @@ static struct json_object * handle_request_insert(struct json_api_insert_request
 
         if (error) {
             free(columns_indexes);
-            storage_table_delete(table);
+            storage_joined_table_delete(joined_table);
             return error;
         }
     }
@@ -192,11 +194,13 @@ static struct json_object * handle_request_insert(struct json_api_insert_request
 
     free(columns_indexes);
     storage_row_delete(row);
-    storage_table_delete(table);
+    storage_joined_table_delete(joined_table);
     return json_api_make_success(json_object_new_object());
 }
 
-static struct json_object * is_where_correct(struct storage_table * table, struct json_api_where * where) {
+static struct json_object * is_where_correct(struct storage_joined_table * table, struct json_api_where * where) {
+    uint16_t table_columns_amount = storage_joined_table_get_columns_amount(table);
+
     switch (where->op) {
         case JSON_API_OPERATOR_EQ:
         case JSON_API_OPERATOR_NE:
@@ -212,9 +216,11 @@ static struct json_object * is_where_correct(struct storage_table * table, struc
                 return json_api_make_error("NULL value is not comparable");
             }
 
-            for (unsigned int i = 0; i < table->columns.amount; ++i) {
-                if (strcmp(table->columns.columns[i].name, where->column) == 0) {
-                    switch (table->columns.columns[i].type) {
+            for (unsigned int i = 0; i < table_columns_amount; ++i) {
+                struct storage_column column = storage_joined_table_get_column(table, i);
+
+                if (strcmp(column.name, where->column) == 0) {
+                    switch (column.type) {
                         case STORAGE_COLUMN_TYPE_INT:
                         case STORAGE_COLUMN_TYPE_UINT:
                         case STORAGE_COLUMN_TYPE_NUM:
@@ -238,7 +244,7 @@ static struct json_object * is_where_correct(struct storage_table * table, struc
                             break;
                     }
 
-                    const char * column_type = storage_column_type_to_string(table->columns.columns[i].type);
+                    const char * column_type = storage_column_type_to_string(column.type);
                     const char * value_type = storage_column_type_to_string(where->value->type);
                     size_t msg_length = 31 + strlen(column_type) + strlen(value_type);
                     char msg[msg_length];
@@ -249,11 +255,10 @@ static struct json_object * is_where_correct(struct storage_table * table, struc
             }
 
             {
-                size_t msg_length = 42 + strlen(table->name) + strlen(where->column);
+                size_t msg_length = 41 + strlen(where->column);
 
                 char msg[msg_length];
-                snprintf(msg, msg_length, "column with name %s is not exists in table %s",
-                         table->name, where->column);
+                snprintf(msg, msg_length, "column with name %s is not exists in table", where->column);
 
                 return json_api_make_error(msg);
             }
@@ -521,7 +526,9 @@ static bool compare_values(enum json_api_operator op, struct storage_value * lef
     return compare_values_not_null(op, *left, *right);
 }
 
-static bool eval_where(struct storage_row * row, struct json_api_where * where) {
+static bool eval_where(struct storage_joined_row * row, struct json_api_where * where) {
+    uint16_t table_columns_amount = storage_joined_table_get_columns_amount(row->table);
+
     switch (where->op) {
         case JSON_API_OPERATOR_EQ:
         case JSON_API_OPERATOR_NE:
@@ -529,9 +536,9 @@ static bool eval_where(struct storage_row * row, struct json_api_where * where) 
         case JSON_API_OPERATOR_GT:
         case JSON_API_OPERATOR_LE:
         case JSON_API_OPERATOR_GE:
-            for (unsigned int i = 0; i < row->table->columns.amount; ++i) {
-                if (strcmp(row->table->columns.columns[i].name, where->column) == 0) {
-                    return compare_values(where->op, storage_row_get_value(row, i), where->value);
+            for (unsigned int i = 0; i < table_columns_amount; ++i) {
+                if (strcmp(storage_joined_table_get_column(row->table, i).name, where->column) == 0) {
+                    return compare_values(where->op, storage_joined_row_get_value(row, i), where->value);
                 }
             }
 
@@ -553,24 +560,26 @@ static struct json_object * handle_request_delete(struct json_api_delete_request
         return json_api_make_error("table with the specified name is not exists");
     }
 
+    struct storage_joined_table * joined_table = storage_joined_table_wrap(table);
+
     if (request.where) {
-        struct json_object * error = is_where_correct(table, request.where);
+        struct json_object * error = is_where_correct(joined_table, request.where);
 
         if (error) {
-            storage_table_delete(table);
+            storage_joined_table_delete(joined_table);
             return error;
         }
     }
 
     unsigned long long amount = 0;
-    for (struct storage_row * row = storage_table_get_first_row(table); row; row = storage_row_next(row)) {
+    for (struct storage_joined_row * row = storage_joined_table_get_first_row(joined_table); row; row = storage_joined_row_next(row)) {
         if (request.where == NULL || eval_where(row, request.where)) {
-            storage_row_remove(row);
+            storage_row_remove(row->rows[0]);
             ++amount;
         }
     }
 
-    storage_table_delete(table);
+    storage_joined_table_delete(joined_table);
     struct json_object * answer = json_object_new_object();
     json_object_object_add(answer, "amount", json_object_new_uint64(amount));
     return json_api_make_success(answer);
@@ -587,11 +596,59 @@ static struct json_object * handle_request_select(struct json_api_select_request
         return json_api_make_error("table with the specified name is not exists");
     }
 
+    struct storage_joined_table * joined_table = storage_joined_table_new(request.joins.amount + 1);
+    joined_table->tables.tables[0].table = table;
+    joined_table->tables.tables[0].t_column_index = 0;
+    joined_table->tables.tables[0].s_column_index = 0;
+
+    for (int i = 0; i < request.joins.amount; ++i) {
+        joined_table->tables.tables[i + 1].table = storage_find_table(storage, request.joins.joins[i].table);
+
+        if (!joined_table->tables.tables[i + 1].table) {
+            storage_joined_table_delete(joined_table);
+            return json_api_make_error("table with the specified name is not exists");
+        }
+
+        joined_table->tables.tables[i + 1].t_column_index = (uint16_t) -1;
+        for (int j = 0; j < joined_table->tables.tables[i + 1].table->columns.amount; ++j) {
+            if (strcmp(request.joins.joins[i].t_column, joined_table->tables.tables[i + 1].table->columns.columns[j].name) == 0) {
+                joined_table->tables.tables[i + 1].t_column_index = j;
+                break;
+            }
+        }
+
+        if (joined_table->tables.tables[i + 1].t_column_index >= joined_table->tables.tables[i + 1].table->columns.amount) {
+            storage_joined_table_delete(joined_table);
+            return json_api_make_error("column with the specified name is not exists in table");
+        }
+
+        uint16_t slice_columns = 0;
+        joined_table->tables.tables[i + 1].s_column_index = (uint16_t) -1;
+        for (int tbl_index = 0, col_index = 0; tbl_index <= i; ++tbl_index) {
+            for (int tbl_col_index = 0; tbl_col_index < joined_table->tables.tables[tbl_index].table->columns.amount; ++tbl_col_index, ++col_index) {
+                if (strcmp(request.joins.joins[i].s_column, joined_table->tables.tables[tbl_index].table->columns.columns[tbl_col_index].name) == 0) {
+                    joined_table->tables.tables[i + 1].s_column_index = col_index;
+                    break;
+                }
+            }
+
+            slice_columns += joined_table->tables.tables[tbl_index].table->columns.amount;
+            if (joined_table->tables.tables[i + 1].s_column_index < slice_columns) {
+                break;
+            }
+        }
+
+        if (joined_table->tables.tables[i + 1].s_column_index >= slice_columns) {
+            storage_joined_table_delete(joined_table);
+            return json_api_make_error("column with the specified name is not exists in the join slice");
+        }
+    }
+
     if (request.where) {
-        struct json_object * error = is_where_correct(table, request.where);
+        struct json_object * error = is_where_correct(joined_table, request.where);
 
         if (error) {
-            storage_table_delete(table);
+            storage_joined_table_delete(joined_table);
             return error;
         }
     }
@@ -600,11 +657,11 @@ static struct json_object * handle_request_select(struct json_api_select_request
     unsigned int * columns_indexes;
 
     {
-        struct json_object * error = map_columns_to_indexes(request.columns.amount, request.columns.columns, table,
-                                                            &columns_amount, &columns_indexes);
+        struct json_object * error = map_columns_to_indexes(request.columns.amount, request.columns.columns,
+            joined_table, &columns_amount, &columns_indexes);
 
         if (error) {
-            storage_table_delete(table);
+            storage_joined_table_delete(joined_table);
             return error;
         }
     }
@@ -614,7 +671,7 @@ static struct json_object * handle_request_select(struct json_api_select_request
         struct json_object * columns = json_object_new_array_ext((int) columns_amount);
 
         for (unsigned int i = 0; i < columns_amount; ++i) {
-            json_object_array_add(columns, json_object_new_string(table->columns.columns[columns_indexes[i]].name));
+            json_object_array_add(columns, json_object_new_string(storage_joined_table_get_column(joined_table, columns_indexes[i]).name));
         }
 
         json_object_object_add(answer, "columns", columns);
@@ -624,7 +681,7 @@ static struct json_object * handle_request_select(struct json_api_select_request
         struct json_object * values = json_object_new_array_ext((int) request.limit);
 
         unsigned int offset = 0, amount = 0;
-        for (struct storage_row * row = storage_table_get_first_row(table); row; row = storage_row_next(row)) {
+        for (struct storage_joined_row * row = storage_joined_table_get_first_row(joined_table); row; row = storage_joined_row_next(row)) {
             if (request.where == NULL || eval_where(row, request.where)) {
                 if (offset < request.offset) {
                     ++offset;
@@ -638,7 +695,7 @@ static struct json_object * handle_request_select(struct json_api_select_request
                 struct json_object * values_row = json_object_new_array_ext((int) columns_amount);
 
                 for (unsigned int i = 0; i < columns_amount; ++i) {
-                    json_object_array_add(values_row, json_api_from_value(storage_row_get_value(row, columns_indexes[i])));
+                    json_object_array_add(values_row, json_api_from_value(storage_joined_row_get_value(row, columns_indexes[i])));
                 }
 
                 json_object_array_add(values, values_row);
@@ -650,7 +707,7 @@ static struct json_object * handle_request_select(struct json_api_select_request
     }
 
     free(columns_indexes);
-    storage_table_delete(table);
+    storage_joined_table_delete(joined_table);
     return json_api_make_success(answer);
 }
 
@@ -661,11 +718,13 @@ static struct json_object * handle_request_update(struct json_api_update_request
         return json_api_make_error("table with the specified name is not exists");
     }
 
+    struct storage_joined_table * joined_table = storage_joined_table_wrap(table);
+
     if (request.where) {
-        struct json_object * error = is_where_correct(table, request.where);
+        struct json_object * error = is_where_correct(joined_table, request.where);
 
         if (error) {
-            storage_table_delete(table);
+            storage_joined_table_delete(joined_table);
             return error;
         }
     }
@@ -674,11 +733,11 @@ static struct json_object * handle_request_update(struct json_api_update_request
     unsigned int * columns_indexes;
 
     {
-        struct json_object * error = map_columns_to_indexes(request.columns.amount, request.columns.columns, table,
-                                                            &columns_amount, &columns_indexes);
+        struct json_object * error = map_columns_to_indexes(request.columns.amount, request.columns.columns,
+            joined_table, &columns_amount, &columns_indexes);
 
         if (error) {
-            storage_table_delete(table);
+            storage_joined_table_delete(joined_table);
             return error;
         }
     }
@@ -688,16 +747,16 @@ static struct json_object * handle_request_update(struct json_api_update_request
 
         if (error) {
             free(columns_indexes);
-            storage_table_delete(table);
+            storage_joined_table_delete(joined_table);
             return error;
         }
     }
 
     unsigned long long amount = 0;
-    for (struct storage_row * row = storage_table_get_first_row(table); row; row = storage_row_next(row)) {
+    for (struct storage_joined_row * row = storage_joined_table_get_first_row(joined_table); row; row = storage_joined_row_next(row)) {
         if (request.where == NULL || eval_where(row, request.where)) {
             for (unsigned int i = 0; i < columns_amount; ++i) {
-                storage_row_set_value(row, columns_indexes[i], request.values.values[i]);
+                storage_row_set_value(row->rows[0], columns_indexes[i], request.values.values[i]);
             }
 
             ++amount;
@@ -705,7 +764,7 @@ static struct json_object * handle_request_update(struct json_api_update_request
     }
 
     free(columns_indexes);
-    storage_table_delete(table);
+    storage_joined_table_delete(joined_table);
     struct json_object * answer = json_object_new_object();
     json_object_object_add(answer, "amount", json_object_new_uint64(amount));
     return json_api_make_success(answer);

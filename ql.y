@@ -12,7 +12,7 @@ void yyerror(struct json_object ** result, char ** error, const char * str);
 %define api.value.type {struct json_object *}
 
 %token T_CREATE T_TABLE T_IDENTIFIER T_DBL_QUOTED T_INT T_UINT T_NUM T_STR T_DROP T_INSERT T_VALUES T_INTO
-    T_INT_LITERAL T_UINT_LITERAL T_NUM_LITERAL T_STR_LITERAL T_NULL T_DELETE T_FROM T_WHERE
+    T_INT_LITERAL T_UINT_LITERAL T_NUM_LITERAL T_STR_LITERAL T_NULL T_DELETE T_FROM T_WHERE T_JOIN T_ON
     T_EQ_OP T_NE_OP T_LT_OP T_GT_OP T_LE_OP T_GE_OP T_SELECT T_ASTERISK T_OFFSET T_LIMIT T_UPDATE T_SET
 
 %left T_OR_OP
@@ -198,7 +198,7 @@ where_value_op
     ;
 
 select_command
-    : T_SELECT names_list_or_asterisk T_FROM name where_stmt_non_req offset_stmt_non_req limit_stmt_non_req {
+    : T_SELECT names_list_or_asterisk T_FROM name join_stmts where_stmt_non_req offset_stmt_non_req limit_stmt_non_req {
         $$ = json_object_new_object();
 
         json_object_object_add($$, "action", json_object_new_int(4));
@@ -209,15 +209,19 @@ select_command
         }
 
         if ($5) {
-            json_object_object_add($$, "where", $5);
+            json_object_object_add($$, "joins", $5);
         }
 
         if ($6) {
-            json_object_object_add($$, "offset", $6);
+            json_object_object_add($$, "where", $6);
         }
 
         if ($7) {
-            json_object_object_add($$, "limit", $7);
+            json_object_object_add($$, "offset", $7);
+        }
+
+        if ($8) {
+            json_object_object_add($$, "limit", $8);
         }
     }
     ;
@@ -225,6 +229,26 @@ select_command
 names_list_or_asterisk
     : names_list_req    { $$ = $1; }
     | T_ASTERISK        { $$ = NULL; }
+    ;
+
+join_stmts
+    : /* empty */           { $$ = NULL; }
+    | join_stmts_non_null   { $$ = $1; }
+    ;
+
+join_stmts_non_null
+    : join_stmt             { $$ = json_object_new_array(); json_object_array_add($$, $1); }
+    | join_stmts join_stmt  { $$ = $1; json_object_array_add($$, $2); }
+    ;
+
+join_stmt
+    : T_JOIN name T_ON name T_EQ_OP name    {
+        $$ = json_object_new_object();
+
+        json_object_object_add($$, "table", $2);
+        json_object_object_add($$, "t_column", $4);
+        json_object_object_add($$, "s_column", $6);
+    }
     ;
 
 offset_stmt_non_req

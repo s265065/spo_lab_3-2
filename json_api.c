@@ -222,6 +222,8 @@ struct json_api_select_request json_api_to_select_request(struct json_object * o
     struct json_api_select_request request;
     request.columns.amount = 0;
     request.columns.columns = NULL;
+    request.joins.amount = 0;
+    request.joins.joins = NULL;
     request.where = NULL;
     request.offset = 0;
     request.limit = 10;
@@ -255,6 +257,31 @@ struct json_api_select_request json_api_to_select_request(struct json_object * o
 
         if (strcmp("limit", key) == 0) {
             request.limit = json_object_get_int(val);
+            continue;
+        }
+
+        if (strcmp("joins", key) == 0) {
+            request.joins.amount = json_object_array_length(val);
+            request.joins.joins = malloc(sizeof(*request.joins.joins) * request.joins.amount);
+
+            for (int i = 0; i < request.joins.amount; ++i) {
+                struct json_object * elem = json_object_array_get_idx(val, i);
+
+                json_object_object_foreach(elem, elem_key, elem_val) {
+                    if (strcmp("table", elem_key) == 0) {
+                        request.joins.joins[i].table = strdup(json_object_get_string(elem_val));
+                    }
+
+                    if (strcmp("t_column", elem_key) == 0) {
+                        request.joins.joins[i].t_column = strdup(json_object_get_string(elem_val));
+                    }
+
+                    if (strcmp("s_column", elem_key) == 0) {
+                        request.joins.joins[i].s_column = strdup(json_object_get_string(elem_val));
+                    }
+                }
+            }
+
             continue;
         }
     }

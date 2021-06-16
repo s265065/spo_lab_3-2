@@ -95,6 +95,8 @@ offset      return T_OFFSET;
 limit       return T_LIMIT;
 update      return T_UPDATE;
 set         return T_SET;
+join        return T_JOIN;
+on          return T_ON;
 \*          return T_ASTERISK;
 "="         return T_EQ_OP;
 "<>"        return T_NE_OP;

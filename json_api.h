@@ -54,6 +54,13 @@
 //     ["where": <where expression>,]
 //     ["offset": <offset (default 0): number>,]
 //     ["limit": <limit (from 0 to 1000, default 10): number>,]
+//     ["joins": [
+//         {
+//             "table": <table name: string>,
+//             "t_column": <column of joining table name: string>,
+//             "s_column": <column of slice name: string>,
+//         },
+//     ],]
 // }
 // - success response: {
 //     "columns": <columns list: string[]>,
@@ -163,6 +170,14 @@ struct json_api_select_request {
     struct json_api_where * where;
     unsigned int offset;
     unsigned int limit;
+    struct {
+        unsigned int amount;
+        struct {
+            char * table;
+            char * t_column;
+            char * s_column;
+        } * joins;
+    } joins;
 };
 
 struct json_api_update_request {

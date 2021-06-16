@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
 #define SIGNATURE ("\xDE\xAD\xBA\xBE")
 
@@ -372,4 +373,240 @@ const char * storage_column_type_to_string(enum storage_column_type type) {
         default:
             return NULL;
     }
+}
+
+
+struct storage_joined_table * storage_joined_table_new(unsigned int amount) {
+    struct storage_joined_table * table = malloc(sizeof(*table));
+
+    table->tables.amount = amount;
+    table->tables.tables = calloc(amount, sizeof(*table->tables.tables));
+
+    return table;
+}
+
+struct storage_joined_table * storage_joined_table_wrap(struct storage_table * table) {
+    if (!table) {
+        return NULL;
+    }
+
+    struct storage_joined_table * joined_table = storage_joined_table_new(1);
+    joined_table->tables.tables[0].table = table;
+    joined_table->tables.tables[0].t_column_index = 0;
+    joined_table->tables.tables[0].s_column_index = 0;
+
+    return joined_table;
+}
+
+void storage_joined_table_delete(struct storage_joined_table * table) {
+    if (table) {
+        for (int i = 0; i < table->tables.amount; ++i) {
+            storage_table_delete(table->tables.tables[i].table);
+        }
+    }
+
+    free(table);
+}
+
+uint16_t storage_joined_table_get_columns_amount(struct storage_joined_table * table) {
+    uint16_t amount = 0;
+
+    for (int i = 0; i < table->tables.amount; ++i) {
+        amount += table->tables.tables[i].table->columns.amount;
+    }
+
+    return amount;
+}
+
+struct storage_column storage_joined_table_get_column(struct storage_joined_table * table, uint16_t index) {
+    for (int i = 0; i < table->tables.amount; ++i) {
+        if (index < table->tables.tables[i].table->columns.amount) {
+            return table->tables.tables[i].table->columns.columns[index];
+        }
+
+        index -= table->tables.tables[i].table->columns.amount;
+    }
+
+    abort();
+}
+
+static bool storage_value_is_equals(struct storage_value * a, struct storage_value * b) {
+    if (a == NULL || b == NULL) {
+        return a == b;
+    }
+
+    switch (a->type) {
+        case STORAGE_COLUMN_TYPE_INT:
+            switch (b->type) {
+                case STORAGE_COLUMN_TYPE_INT:
+                    return a->value._int == b->value._int;
+
+                case STORAGE_COLUMN_TYPE_UINT:
+                    if (a->value._int < 0) {
+                        return false;
+                    }
+
+                    return ((uint64_t) a->value._int) == b->value.uint;
+
+                case STORAGE_COLUMN_TYPE_NUM:
+                    return ((double) a->value._int) == b->value.num;
+
+                case STORAGE_COLUMN_TYPE_STR:
+                    return false;
+            }
+
+        case STORAGE_COLUMN_TYPE_UINT:
+            switch (b->type) {
+                case STORAGE_COLUMN_TYPE_INT:
+                    if (b->value._int < 0) {
+                        return false;
+                    }
+
+                    return a->value.uint == ((uint64_t) b->value._int);
+
+                case STORAGE_COLUMN_TYPE_UINT:
+                    return a->value.uint == b->value.uint;
+
+                case STORAGE_COLUMN_TYPE_NUM:
+                    return ((double) a->value.uint) == b->value.num;
+
+                case STORAGE_COLUMN_TYPE_STR:
+                    return false;
+            }
+
+        case STORAGE_COLUMN_TYPE_NUM:
+            switch (b->type) {
+                case STORAGE_COLUMN_TYPE_INT:
+                    return a->value.num == ((double) b->value._int);
+
+                case STORAGE_COLUMN_TYPE_UINT:
+                    return a->value.num == ((double) b->value.uint);
+
+                case STORAGE_COLUMN_TYPE_NUM:
+                    return a->value.num == b->value.num;
+
+                case STORAGE_COLUMN_TYPE_STR:
+                    return false;
+            }
+
+        case STORAGE_COLUMN_TYPE_STR:
+            switch (b->type) {
+                case STORAGE_COLUMN_TYPE_INT:
+                case STORAGE_COLUMN_TYPE_UINT:
+                case STORAGE_COLUMN_TYPE_NUM:
+                    return false;
+
+                case STORAGE_COLUMN_TYPE_STR:
+                    return strcmp(a->value.str, b->value.str) == 0;
+            }
+    }
+}
+
+static bool storage_joined_row_is_on(struct storage_joined_row * row, uint16_t index) {
+    return storage_value_is_equals(
+        storage_joined_row_get_value(row, row->table->tables.tables[index].s_column_index),
+        storage_row_get_value(row->rows[index], row->table->tables.tables[index].t_column_index)
+    );
+}
+
+static void storage_joined_row_roll(struct storage_joined_row * row) {
+    for (int i = 1; i < row->table->tables.amount; ++i) {
+        if (!storage_joined_row_is_on(row, i)) {
+            row->rows[i] = storage_row_next(row->rows[i]);
+
+            for (int j = i + 1; j < row->table->tables.amount; ++j) {
+                storage_row_delete(row->rows[j]);
+                row->rows[j] = storage_table_get_first_row(row->table->tables.tables[j].table);
+            }
+
+            for (int j = i; j > 0; --j) {
+                if (row->rows[j] == NULL) {
+                    row->rows[j] = storage_table_get_first_row(row->table->tables.tables[j].table);
+                    row->rows[j - 1] = storage_row_next(row->rows[j - 1]);
+                }
+            }
+
+            if (row->rows[0] == NULL) {
+                return;
+            }
+
+            i = 0;
+        }
+    }
+}
+
+struct storage_joined_row * storage_joined_table_get_first_row(struct storage_joined_table * table) {
+    struct storage_joined_row * row = malloc(sizeof(*row));
+
+    row->table = table;
+    row->rows = malloc(sizeof(struct storage_row *) * table->tables.amount);
+    for (int i = 0; i < table->tables.amount; ++i) {
+        row->rows[i] = NULL;
+    }
+
+    for (int i = 0; i < table->tables.amount; ++i) {
+        row->rows[i] = storage_table_get_first_row(table->tables.tables[i].table);
+
+        if (row->rows[i] == NULL) {
+            storage_joined_row_delete(row);
+            return NULL;
+        }
+    }
+
+    storage_joined_row_roll(row);
+    if (row->rows[0] == NULL) {
+        storage_joined_row_delete(row);
+        return NULL;
+    }
+
+    return row;
+}
+
+void storage_joined_row_delete(struct storage_joined_row * row) {
+    if (row) {
+        for (int i = 0; i < row->table->tables.amount; ++i) {
+            storage_row_delete(row->rows[i]);
+        }
+
+        free(row->rows);
+    }
+
+    free(row);
+}
+
+struct storage_joined_row * storage_joined_row_next(struct storage_joined_row * row) {
+    uint16_t last_index = row->table->tables.amount - 1;
+
+    row->rows[last_index] = storage_row_next(row->rows[last_index]);
+    for (int i = (int) last_index; i > 0; --i) {
+        if (row->rows[i] == NULL) {
+            row->rows[i] = storage_table_get_first_row(row->table->tables.tables[i].table);
+            row->rows[i - 1] = storage_row_next(row->rows[i - 1]);
+        }
+    }
+
+    if (row->rows[0] == NULL) {
+        storage_joined_row_delete(row);
+        return NULL;
+    }
+
+    storage_joined_row_roll(row);
+    if (row->rows[0] == NULL) {
+        storage_joined_row_delete(row);
+        return NULL;
+    }
+
+    return row;
+}
+
+struct storage_value * storage_joined_row_get_value(struct storage_joined_row * row, uint16_t index) {
+    for (int i = 0; i < row->table->tables.amount; ++i) {
+        if (index < row->table->tables.tables[i].table->columns.amount) {
+            return storage_row_get_value(row->rows[i], index);
+        }
+
+        index -= row->table->tables.tables[i].table->columns.amount;
+    }
+
+    return NULL;
 }

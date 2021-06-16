@@ -39,6 +39,8 @@
 // Cell structure:
 // - Value: value of type that noticed in table header column
 
+static const char * const JOINED_TABLE_NAME = "joined table";
+
 enum storage_column_type {
     STORAGE_COLUMN_TYPE_INT = 0,
     STORAGE_COLUMN_TYPE_UINT = 1,
@@ -89,6 +91,22 @@ struct storage_value {
     } value;
 };
 
+struct storage_joined_table {
+    struct {
+        unsigned int amount;
+        struct {
+            struct storage_table * table;
+            uint16_t t_column_index;
+            uint16_t s_column_index;
+        } * tables;
+    } tables;
+};
+
+struct storage_joined_row {
+    struct storage_joined_table * table;
+    struct storage_row ** rows;
+};
+
 // storage
 
 struct storage * storage_init(int fd);
@@ -123,3 +141,20 @@ void storage_value_delete(struct storage_value * value);
 // storage_column_type
 
 const char * storage_column_type_to_string(enum storage_column_type type);
+
+// storage_joined_table
+
+struct storage_joined_table * storage_joined_table_new(unsigned int amount);
+struct storage_joined_table * storage_joined_table_wrap(struct storage_table * table);
+void storage_joined_table_delete(struct storage_joined_table * table);
+
+uint16_t storage_joined_table_get_columns_amount(struct storage_joined_table * table);
+struct storage_column storage_joined_table_get_column(struct storage_joined_table * table, uint16_t index);
+struct storage_joined_row * storage_joined_table_get_first_row(struct storage_joined_table * table);
+
+// storage_json_row
+
+void storage_joined_row_delete(struct storage_joined_row * row);
+
+struct storage_joined_row * storage_joined_row_next(struct storage_joined_row * row);
+struct storage_value * storage_joined_row_get_value(struct storage_joined_row * row, uint16_t index);
