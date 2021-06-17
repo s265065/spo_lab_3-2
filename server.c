@@ -146,10 +146,13 @@ static struct json_object * check_values(unsigned int request_values_amount, str
                 break;
         }
 
-        size_t msg_length = 43 + strlen(column.name);
+        const char * col_type = storage_column_type_to_string(column.type);
+        const char * val_type = storage_column_type_to_string(request_values_values[i]->type);
+        size_t msg_length = 47 + strlen(column.name) + strlen(col_type) + strlen(val_type);
 
         char msg[msg_length];
-        snprintf(msg, msg_length, "value for column with name %s has wrong type", column.name);
+        snprintf(msg, msg_length, "value for column with name %s (%s) has wrong type %s",
+                 column.name, col_type, val_type);
         return json_api_make_error(msg);
     }
 
@@ -268,7 +271,7 @@ static struct json_object * is_where_correct(struct storage_joined_table * table
         {
             struct json_object * left = is_where_correct(table, where->left);
             if (left != NULL) {
-                return NULL;
+                return left;
             }
 
             return is_where_correct(table, where->right);
@@ -857,7 +860,7 @@ int main(int argc, char * argv[]) {
     }
 
     if (fd < 0 && errno == ENOENT) {
-        fd = open("file.db", O_CREAT | O_RDWR, 0644);
+        fd = open(argv[1], O_CREAT | O_RDWR, 0644);
         storage = storage_init(fd);
     } else {
         storage = storage_open(fd);

@@ -1,0 +1,5 @@
+CREATE TABLE client (id uint, name str, discount uint);
+CREATE TABLE cat (id uint, name str, color int);
+CREATE TABLE employer (id uint, name str, salary num);
+CREATE TABLE doctor (id uint, position str);
+CREATE TABLE aaaaa(a int, b uint, c str, d num, e str);

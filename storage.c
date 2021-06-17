@@ -1,6 +1,4 @@
-#define _LARGEFILE64_SOURCE     /* See feature_test_macros(7) */
-#include <sys/types.h>
-#include <unistd.h>
+#define _LARGEFILE64_SOURCE
 
 #include "storage.h"
 
@@ -10,12 +8,8 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-
 #define SIGNATURE ("\xDE\xAD\xBA\xBE")
-#ifdef PLATFORM_MACOS
-    #define lseek64(handle,offset,whence) lseek(handle,offset,whence) // macos
-    #include <sys/dtrace.h>
-#endif
+
 struct storage * storage_init(int fd) {
     lseek64(fd, 0, SEEK_SET);
 
@@ -409,6 +403,8 @@ void storage_joined_table_delete(struct storage_joined_table * table) {
         for (int i = 0; i < table->tables.amount; ++i) {
             storage_table_delete(table->tables.tables[i].table);
         }
+
+        free(table->tables.tables);
     }
 
     free(table);
