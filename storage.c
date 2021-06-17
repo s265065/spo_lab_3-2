@@ -9,11 +9,12 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include <sys/dtrace.h>
+
 
 #define SIGNATURE ("\xDE\xAD\xBA\xBE")
 #ifdef PLATFORM_MACOS
     #define lseek64(handle,offset,whence) lseek(handle,offset,whence) // macos
+    #include <sys/dtrace.h>
 #endif
 struct storage * storage_init(int fd) {
     lseek64(fd, 0, SEEK_SET);

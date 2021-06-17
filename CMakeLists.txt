@@ -21,14 +21,15 @@ target_include_directories(client PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH};${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
+if (APPLE)
 find_package(FLEX  REQUIRED)
 set(BISON_EXECUTABLE /opt/homebrew/opt/bison/bin/bison)
 find_package(BISON 3.0.0 REQUIRED)
-
-if (APPLE)
-    add_definitions(-DPLATFORM_MACOS)
-    target_link_libraries(client /opt/homebrew/Cellar/json-c/0.15/lib/libjson-c.dylib)
+add_definitions(-DPLATFORM_MACOS)
+target_link_libraries(client /opt/homebrew/Cellar/json-c/0.15/lib/libjson-c.dylib)
 else()
+    find_package(BISON 3.0.0 REQUIRED)
+    find_package(FLEX  REQUIRED)
     target_link_libraries(client json-c)
 endif ()
 
