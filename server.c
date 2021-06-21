@@ -92,7 +92,6 @@ static struct json_object * map_columns_to_indexes(unsigned int request_columns_
                 char msg[msg_length];
                 snprintf(msg, msg_length, "column with name %s is not exists in table", request_columns_names[i]);
 
-                storage_joined_table_delete(table);
                 return json_api_make_error(msg);
             }
         }

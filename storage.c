@@ -10,6 +10,11 @@
 
 #define SIGNATURE ("\xDE\xAD\xBA\xBE")
 
+#ifdef PLATFORM_MACOS
+#include <sys/dtrace.h>
+#define lseek64(handle,offset,whence) lseek(handle,offset,whence) // macos
+#endif
+
 struct storage * storage_init(int fd) {
     lseek64(fd, 0, SEEK_SET);
 
